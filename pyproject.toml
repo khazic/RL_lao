@@ -139,6 +139,10 @@ build = [
   "pybind11",
   # Build requirement for flash-attn
   "psutil",
+  # Required by flash-attn source build (its setup.py invokes ninja/wheel
+  # directly when building under --no-build-isolation).
+  "ninja",
+  "wheel",
 ]
 docs = [
   "sphinx",
@@ -223,7 +227,7 @@ explicit = true
 
 [tool.uv]
 preview = true # Enable preview features like extra-build-dependencies
-extra-build-variables = { sglang-kernel = { CMAKE_BUILD_PARALLEL_LEVEL = "24", FLASHINFER_CUDA_ARCH_LIST = "9.0a 10.0a", CMAKE_ARGS = "-DCMAKE_POLICY_VERSION_MINIMUM=3.5" } }
+extra-build-variables = { sglang-kernel = { CMAKE_BUILD_PARALLEL_LEVEL = "24", FLASHINFER_CUDA_ARCH_LIST = "9.0a 10.0a", CMAKE_ARGS = "-DCMAKE_POLICY_VERSION_MINIMUM=3.5" }, flash-attn = { MAX_JOBS = "4" } }
 no-build-isolation-package = [
   "transformer-engine-torch",
   "transformer-engine",
@@ -235,6 +239,14 @@ no-build-isolation-package = [
   "nv-grouped-gemm",          # from mlm (added here to make sure it's built no isolation since mlm workspace uses setup.py)
   "sglang-kernel",
 ]
+# Force flash-attn to always be built from source, never installed from a
+# prebuilt wheel.  Dao-AILab v2.8.1 ships only cu13+cp313 and cu12+cp312
+# wheels (no cu13+cp312); falling back to the cu12+cp312 PyPI wheel dlopens
+# libcudart.so.12 which doesn't exist in this cu13 image, breaking actor
+# venvs that import flash_attn_2_cuda. Combined with no-build-isolation
+# above, this rebuilds flash-attn against the venv's NGC cu13 torch and
+# caches the result so per-actor uv syncs reuse the built wheel.
+no-binary-package = ["flash-attn"]
 # Always apply the build group since dependencies like TE/mcore/nemo-run require build dependencies
 # and this lets us assume they are implicitly installed with a simply `uv sync`. Ideally, we'd
 # avoid including these in the default dependency set, but for now it's required.

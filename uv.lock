@@ -3752,12 +3752,14 @@ vllm = [
 build = [
     { name = "einops" },
     { name = "hatchling" },
+    { name = "ninja" },
     { name = "packaging" },
     { name = "psutil" },
     { name = "pybind11" },
     { name = "setuptools" },
     { name = "torch", version = "2.10.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin' or (extra == 'extra-7-nemo-rl-automodel' and extra == 'extra-7-nemo-rl-fsdp') or (extra == 'extra-7-nemo-rl-automodel' and extra == 'extra-7-nemo-rl-mcore') or (extra == 'extra-7-nemo-rl-automodel' and extra == 'extra-7-nemo-rl-sglang') or (extra == 'extra-7-nemo-rl-automodel' and extra == 'extra-7-nemo-rl-vllm') or (extra == 'extra-7-nemo-rl-fsdp' and extra == 'extra-7-nemo-rl-sglang') or (extra == 'extra-7-nemo-rl-mcore' and extra == 'extra-7-nemo-rl-sglang') or (extra == 'extra-7-nemo-rl-mcore' and extra == 'extra-7-nemo-rl-vllm') or (extra == 'extra-7-nemo-rl-sglang' and extra == 'extra-7-nemo-rl-vllm')" },
     { name = "torch", version = "2.10.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "sys_platform != 'darwin' or (extra == 'extra-7-nemo-rl-automodel' and extra == 'extra-7-nemo-rl-fsdp') or (extra == 'extra-7-nemo-rl-automodel' and extra == 'extra-7-nemo-rl-mcore') or (extra == 'extra-7-nemo-rl-automodel' and extra == 'extra-7-nemo-rl-sglang') or (extra == 'extra-7-nemo-rl-automodel' and extra == 'extra-7-nemo-rl-vllm') or (extra == 'extra-7-nemo-rl-fsdp' and extra == 'extra-7-nemo-rl-sglang') or (extra == 'extra-7-nemo-rl-mcore' and extra == 'extra-7-nemo-rl-sglang') or (extra == 'extra-7-nemo-rl-mcore' and extra == 'extra-7-nemo-rl-vllm') or (extra == 'extra-7-nemo-rl-sglang' and extra == 'extra-7-nemo-rl-vllm')" },
+    { name = "wheel" },
 ]
 dev = [
     { name = "pre-commit" },
@@ -3868,12 +3870,14 @@ provides-extras = ["fsdp", "automodel", "vllm", "sglang", "mcore", "nvrx", "nemo
 build = [
     { name = "einops" },
     { name = "hatchling" },
+    { name = "ninja" },
     { name = "packaging" },
     { name = "psutil" },
     { name = "pybind11" },
     { name = "setuptools" },
     { name = "torch", marker = "sys_platform != 'darwin'", specifier = "==2.10.0", index = "https://download.pytorch.org/whl/cu130" },
     { name = "torch", marker = "sys_platform == 'darwin'", specifier = "==2.10.0", index = "https://pypi.org/simple" },
+    { name = "wheel" },
 ]
 dev = [
     { name = "pre-commit", specifier = ">=4.2.0" },

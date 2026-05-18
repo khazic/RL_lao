@@ -1,0 +1,189 @@
+# Infra for dapo-gemma4-31b-it-4n8g-fsdp2-automodel on a 4n×8GPU A100 cluster.
+#
+# Topology: 4 workers × 8 A100 GPUs = 32 GPUs in one RayCluster.
+# Differences vs the GB300 example:
+#   - No MNNVL ComputeDomain (A100 has no MNNVL).
+#   - No RoCE DRA ResourceClaim (assumes standard NCCL over IB/RoCE wired via
+#     host network or device-plugin; tune NCCL_* envs to your fabric).
+#   - 8 GPUs per worker instead of 4.
+#
+# Model weights are loaded from a PVC that mounts /llm-align/... into pods at
+# the same path on the host — see workspaceVolumes below.
+#
+# TODOs you must fill in before launching:
+#   - image, imagePullSecrets, serviceAccount
+#   - namespace (or set kube context default and remove the field)
+#   - workerNodeSelector (label that matches your A100 nodes)
+#   - pvc names for code + model storage
+#   - If your cluster has no KAI scheduler, remove `schedulerName: kai-scheduler`
+#     and the `kai.scheduler/*` labels/annotations.
+#
+# Usage:
+#   RECIPE=examples/configs/recipes/llm/dapo-gemma4-31b-it-4n8g-fsdp2-automodel.yaml
+#   INFRA=infra/nrl_k8s/examples/gemma4_31b_dapo_4n_8gpu.a100.infra.yaml
+#   nrl-k8s check $RECIPE --infra $INFRA
+#   nrl-k8s run   $RECIPE --infra $INFRA --rayjob --no-wait
+
+_shared:
+  headNodeSelector: &head_node_selector
+    # TODO: replace with a CPU-only node label on your cluster
+    nodeGroup: cpu
+
+  workerNodeSelector: &worker_node_selector
+    # TODO: replace with the label that selects your A100 nodes, e.g.:
+    #   nvidia.com/gpu.product: NVIDIA-A100-SXM4-80GB
+    nvidia.com/gpu.product: NVIDIA-A100-SXM4-80GB
+
+  userSecretEnvFrom: &user_secret_env_from
+    - secretRef:
+        name: ${user:}-secrets
+        optional: true
+
+  headEnv: &shared_head_env
+    - {name: HF_HOME,                       value: "/mnt/rl-workspace/${user:}/hf-cache"}
+    - {name: NCCL_DEBUG,                    value: WARN}
+    - {name: RAY_memory_monitor_refresh_ms, value: "0"}
+
+  workerEnv: &shared_worker_env
+    - {name: HF_HOME,                       value: "/mnt/rl-workspace/${user:}/hf-cache"}
+    - {name: NCCL_DEBUG,                    value: WARN}
+    # TODO: set IB/RoCE related NCCL envs for your fabric if needed
+    # - {name: NCCL_IB_HCA,                 value: "mlx5"}
+    # - {name: NCCL_SOCKET_IFNAME,          value: "eth0"}
+    - {name: RAY_memory_monitor_refresh_ms, value: "0"}
+
+  headResources: &head_resources
+    limits:   {cpu: "16", memory: "64Gi"}
+    requests: {cpu: "8",  memory: "32Gi"}
+
+  gpuWorkerResources: &gpu_worker_resources
+    # 8x A100 node. Adjust cpu/memory to your node allocatable.
+    limits:
+      cpu: "120"
+      memory: "1000Gi"
+      nvidia.com/gpu: "8"
+    requests:
+      cpu: "96"
+      memory: "900Gi"
+      nvidia.com/gpu: "8"
+
+  gpuHeadPorts: &gpu_head_ports
+    - {containerPort: 6379,  name: gcs-server}
+    - {containerPort: 8265,  name: dashboard}
+    - {containerPort: 10001, name: client}
+
+  # /opt/nemo-rl   — nemo-rl code (PVC subPath, or use codeSource: image)
+  # /mnt/rl-workspace — datasets, HF cache, checkpoints
+  # /llm-align     — pre-downloaded model weights (same path as host)
+  codeMounts: &code_mounts
+    - {mountPath: /dev/shm,          name: dshm}
+    - {mountPath: /opt/nemo-rl,      name: rl-workspace, subPath: "${user:}/nemo-rl"}
+    - {mountPath: /mnt/rl-workspace, name: rl-workspace}
+    - {mountPath: /llm-align,        name: llm-align}
+
+  headVolumes: &head_volumes
+    - name: dshm
+      emptyDir: {medium: Memory, sizeLimit: 32Gi}
+    - name: rl-workspace
+      persistentVolumeClaim: {claimName: rl-workspace}     # TODO: your code/data PVC
+    - name: llm-align
+      persistentVolumeClaim: {claimName: llm-align}        # TODO: PVC that exposes /llm-align/...
+
+  workerVolumes: &worker_volumes
+    - name: dshm
+      emptyDir: {medium: Memory, sizeLimit: 64Gi}
+    - name: rl-workspace
+      persistentVolumeClaim: {claimName: rl-workspace}
+    - name: llm-align
+      persistentVolumeClaim: {claimName: llm-align}
+
+namespace: default
+image: nvcr.io/nvidian/nemo-rl:664d29c-49528955
+imagePullSecrets: [nvcr-secret]
+serviceAccount: nemo-rl-endpoint-registry
+
+labels:
+  nrl-k8s/owner: ${user:}
+
+submit:
+  submitter: portForward
+
+launch:
+  mode: attach
+  runMode: batch
+  codeSource: image
+  codePath: /opt/nemo-rl
+  peerWatcher: false
+  env: {}
+  entrypoint: |
+    set -eu
+    cd /opt/nemo-rl
+    export PYTHONPATH=.
+    TIMESTAMP=$(date -u +%Y%m%d-%H%M%S)
+    LOG_DIR=/mnt/rl-workspace/${user:}/driver_logs
+    LOG=\${LOG_DIR}/gemma4-31b-dapo-\${TIMESTAMP}.log
+    mkdir -p "\${LOG_DIR}"
+
+    python -u examples/run_grpo.py \
+      --config examples/configs/recipes/llm/dapo-gemma4-31b-it-4n8g-fsdp2-automodel.yaml \
+      policy.model_name=/llm-align/open_models/gemma4/gemma-4-31B-it \
+      policy.tokenizer.name=/llm-align/open_models/gemma4/gemma-4-31B-it \
+      grpo.max_num_steps=5 \
+      grpo.val_period=5 \
+      checkpointing.save_period=5 \
+      logger.wandb_enabled=false \
+      logger.tensorboard_enabled=true \
+      2>&1 | tee "\${LOG}"
+
+kuberay:
+  training:
+    name: ${user:}-raycluster-gemma4-31b-dapo
+    segmentSize: 1
+    labels:
+      nemo-rl/cluster: gemma4-31b-dapo
+      nemo-rl/run: gemma4-31b-dapo
+    spec:
+      rayVersion: "2.52.0"
+      headGroupSpec:
+        rayStartParams:
+          dashboard-host: "0.0.0.0"
+          no-monitor: "true"
+          num-gpus: "0"
+          object-store-memory: "200000000"
+        template:
+          spec:
+            dnsPolicy: ClusterFirst
+            nodeSelector: *head_node_selector
+            containers:
+              - name: ray-head
+                env: *shared_head_env
+                envFrom: *user_secret_env_from
+                resources: *head_resources
+                ports: *gpu_head_ports
+                volumeMounts: *code_mounts
+            volumes: *head_volumes
+      workerGroupSpecs:
+        - groupName: gpu-workers
+          replicas: 4
+          minReplicas: 4
+          maxReplicas: 4
+          numOfHosts: 1
+          rayStartParams:
+            num-gpus: "8"
+            object-store-memory: "200000000"
+          template:
+            spec:
+              dnsPolicy: ClusterFirst
+              nodeSelector: *worker_node_selector
+              tolerations:
+                - operator: Exists
+              containers:
+                - name: ray-worker
+                  env: *shared_worker_env
+                  envFrom: *user_secret_env_from
+                  resources: *gpu_worker_resources
+                  securityContext:
+                    capabilities:
+                      add: [IPC_LOCK]
+                  volumeMounts: *code_mounts
+              volumes: *worker_volumes
